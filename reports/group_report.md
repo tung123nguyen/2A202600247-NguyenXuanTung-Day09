@@ -79,8 +79,8 @@ if matched_policy:
     route_reason = f"task contains policy/access keyword: {matched_policy}"
 ```
 
-Trace q01: `route_reason: "task contains SLA/ticket keyword: ['p1', 'sla']"`, latency=45ms.
-Trace q07: `route_reason: "task contains policy/access keyword: ['hoàn tiền', 'flash sale']"`, latency=52ms.
+Trace gq01: `route_reason: "task contains SLA/ticket keyword: ['p1', 'sla', 'ticket', 'escalation']"`, latency=15682ms.
+Trace gq07: `route_reason: "task contains SLA/ticket keyword: ['p1', 'sla']"`, latency=3185ms.
 
 ---
 
@@ -90,18 +90,18 @@ Trace q07: `route_reason: "task contains policy/access keyword: ['hoàn tiền',
 
 **Câu pipeline xử lý tốt nhất:**
 
-- **gq01** (P1 lúc 22:47): Route sang `retrieval_worker`, retrieve chính xác từ `sla_p1_2026.txt`, trả lời đủ: on-call qua PagerDuty + Slack + email, escalation lúc 22:57. confidence=0.91.
-- **gq04** (store credit = bao nhiêu %): Retrieve được "110% so với số tiền hoàn" từ `policy_refund_v4.txt`. Câu factual đơn giản, confidence=0.93.
-- **gq10** (Flash Sale + lỗi nhà sản xuất + 7 ngày): Policy worker detect `flash_sale_exception` đúng, trả lời "không được hoàn tiền" dù đủ điều kiện thông thường.
+- **gq01** (P1 lúc 22:47): Route sang `retrieval_worker`, trả lời đúng thông tin on-call engineer qua đường Slack và email, escalation trong 10 phút. confidence=0.59, latency=15682ms.
+- **gq04** (store credit = bao nhiêu %): `policy_tool_worker` sử dụng `search_kb` lấy được thông tin 110% so với số tiền gốc. confidence=0.57, latency=2718ms.
+- **gq10** (Flash Sale + lỗi nhà sản xuất + 7 ngày): Policy worker trả lời xuất sắc "Khách hàng không được hoàn tiền cho sản phẩm mua trong chương trình Flash Sale". confidence=0.66, latency=2964ms.
 
 **Câu pipeline fail hoặc partial:**
 
-- **gq07** (mức phạt tài chính vi phạm SLA P1): Nhóm xử lý đúng bằng abstain — trả lời "Tài liệu nội bộ hiện tại không có thông tin về mức phạt tài chính khi vi phạm SLA P1. Vui lòng liên hệ IT Management hoặc Legal team." confidence=0.28. → Đúng abstain, 10/10.
-- **gq09** (P1 lúc 2am + Level 2 contractor): Partial — pipeline trả lời được phần SLA (Slack + PagerDuty), nhưng Level 2 emergency bypass chưa rõ ràng (policy worker dùng `ACCESS_RULES[2]` nhưng synthesis chưa emphasize đủ điều kiện "approval đồng thời"). Ước tính 8/16.
+- **gq07** (mức phạt tài chính vi phạm SLA P1): Abstain xuất sắc — do trả lời "Không đủ thông tin trong tài liệu nội bộ." với confidence thấp (0.3). Worker: `retrieval_worker`.
+- **gq09** (P1 lúc 2am + Level 2 contractor): Trace ghi nhận `workers_called: ["policy_tool_worker", "synthesis_worker"]`. Trả lời khá đầy đủ các bước xử lý cũng như cần sự phê duyệt bằng lời từ Tech Lead. Tuy nhiên, latency cao (4860ms).
 
-**Câu gq07 (abstain):** Synthesis worker có `SYSTEM_PROMPT` nghiêm ngặt "CHỈ trả lời dựa vào context". Khi `retrieved_chunks` không có thông tin về financial penalty (docs không đề cập), answer bắt đầu bằng "Không đủ thông tin trong tài liệu nội bộ". Đây là behavior đúng.
+**Câu gq07 (abstain):** Khi tài liệu không đề cập mức phạt tài chính, pipeline đã trả về đúng "Không đủ thông tin trong tài liệu nội bộ", mô phỏng hoàn hảo behavior trong hiện thực.
 
-**Câu gq09 (multi-hop):** Trace ghi `workers_called: ["policy_tool_worker", "retrieval_worker", "synthesis_worker"]` — đúng 2 workers. MCP `check_access_permission(level=2, is_emergency=True)` trả về `emergency_override=True` và điều kiện approval đồng thời. Synthesis nhận được context nhưng không emphasize đủ → partial.
+**Câu gq09 (multi-hop):** Pipeline đã thành công trong việc nhận diện `policy/access keyword: ['level 2'] | risk_high flagged: ['emergency', '2am']` để gọi các tool `search_kb` và `get_ticket_info` trong `policy_tool_worker`.
 
 ---
 
@@ -109,15 +109,16 @@ Trace q07: `route_reason: "task contains policy/access keyword: ['hoàn tiền',
 
 **Metric thay đổi rõ nhất:**
 
-Multi-hop accuracy tăng từ ~40% (Day 08) lên ~73% (Day 09). Cụ thể: câu q15 (P1 lúc 2am + Level 2 access) — Day 08 pipeline chỉ trả lời được phần SLA vì retrieve lấy 3 chunks từ cùng 1 tài liệu; Day 09 có policy_tool_worker xử lý access control riêng, synthesis nhận được context từ cả 2 tài liệu.
+- Confidence: giảm không đáng kể (-0.004) khi trung bình đạt 0.576. Từng câu đều bù trừ nhau sát sao (gq02 tăng từ 0.625 lên 0.68, gq07 giảm xuống 0.3).
+- Latency: chỉ tăng trung bình 194ms (4687ms so với 4493ms) — cải thiện rất lớn về luồng xử lý nhưng overhead là cực nhỏ.
 
 **Điều nhóm bất ngờ nhất:**
 
-Routing step gần như không tăng latency cho câu đơn giản. Keyword matching ~1ms, overhead tổng cộng ~300ms so với Day 08. Nhóm đã lo rằng multi-agent sẽ làm chậm đáng kể, nhưng thực tế latency chủ yếu vẫn là LLM call (~800ms), không phải routing.
+Routing module bằng Python hoạt động mạnh mẽ, hỗ trợ debug O(1) nhờ logged `route_reason`. Ưu điểm vượt trội ở Day 09 là mỗi worker có thể test độc lập, khả năng thêm tools qua MCP ("Day09 thêm tool qua MCP không sửa core; Day08 phải sửa toàn pipeline"), và tự phân luồng các risk cao.
 
 **Trường hợp multi-agent KHÔNG giúp ích:**
 
-Câu q02 ("hoàn tiền trong bao nhiêu ngày") bị route sai sang `policy_tool_worker` vì keyword "hoàn tiền". Câu này chỉ cần factual lookup đơn giản, không cần policy check. Policy worker gọi thêm MCP `search_kb` không cần thiết, tổng latency tăng thêm ~200ms mà không improve accuracy.
+Câu gq02 ("hoàn tiền") bị route sang `policy_tool_worker` vì bị khớp từ khóa trong câu hỏi. Mặc dù nó sử dụng `search_kb` để tìm được đúng thông tin, nhưng latency ở mức cao (4862ms) nếu so sánh với truy xuất thông thường của retrieval_worker trơn. Thông qua trace, có thể thấy hệ thống vẫn bị phụ thuộc khi matcher trúng từ khóa khiến worker tốn thời gian gọi tool nếu không cần thiết.
 
 ---
 
@@ -135,7 +136,7 @@ Câu q02 ("hoàn tiền trong bao nhiêu ngày") bị route sai sang `policy_too
 
 **Điều nhóm làm tốt:**
 
-Phân công rõ ràng từ đầu, mỗi người có file chịu trách nhiệm chính. Contract trong `worker_contracts.yaml` được viết trước khi implement — điều này giúp Trần Thị Bình (retrieval) và Lê Minh Châu (synthesis) có thể implement song song mà không bị blocking lẫn nhau.
+Phân công rõ ràng từ đầu, mỗi người có file chịu trách nhiệm chính. Contract trong `worker_contracts.yaml` được viết trước khi implement — điều này giúp Nguyễn Viết Hùng (retrieval) và Đỗ Đình Hoàn (synthesis) có thể implement song song mà không bị blocking lẫn nhau.
 
 **Điều nhóm làm chưa tốt:**
 
@@ -149,7 +150,7 @@ Tích hợp policy_tool_worker với graph.py mất ~30 phút vì state field na
 
 ## 6. Nếu có thêm 1 ngày, nhóm sẽ làm gì?
 
-Thay keyword routing bằng LLM intent classifier nhỏ (gpt-4o-mini / Haiku, ~50 tokens). Bằng chứng từ trace: câu q02 và q03 bị route sai vì paraphrase — "hoàn tiền trong bao nhiêu ngày" không cần policy check, "ai phê duyệt cấp quyền" cần access control nhưng không rõ từ keyword một mình. LLM classifier sẽ giải quyết được cả 2 case này mà chỉ thêm ~100ms latency — acceptable vì accuracy tăng từ 93% lên ~98%.
+Thay keyword routing bằng LLM intent classifier nhỏ. Bằng chứng từ trace: mặc dù keyword routing hoạt động tốt cho gq02, gq03 nhưng nó sẽ kém linh hoạt khi scale hoặc khi cần phân biệt rõ ngữ cảnh paraphrase nâng cao. LLM classifier sẽ linh hoạt hơn đối với paraphrase mà dự kiến latency sẽ không bị ảnh hưởng quá nghiêm trọng.
 
 ---
 

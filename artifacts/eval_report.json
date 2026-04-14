@@ -1,0 +1,109 @@
+{
+  "generated_at": "2026-04-14T18:19:19.161685",
+  "day08_single_agent": {
+    "total_questions": 10,
+    "avg_confidence": 0.58,
+    "avg_latency_ms": 4493,
+    "pipeline": "dense_retrieval(top_k=10→3) → LLM",
+    "routing": "none",
+    "mcp": false,
+    "hitl": false
+  },
+  "day09_multi_agent": {
+    "total_questions": 10,
+    "avg_confidence": 0.576,
+    "avg_latency_ms": 4687,
+    "pipeline": "supervisor → [retrieval(top_k=5)|policy_tool(MCP)] → synthesis",
+    "routing_distribution": {
+      "retrieval_worker": 5,
+      "policy_tool_worker": 5
+    },
+    "mcp_questions": 5,
+    "hitl_triggered": 0
+  },
+  "per_question": [
+    {
+      "id": "gq01",
+      "day08_conf": 0.587,
+      "day09_conf": 0.59,
+      "delta": 0.003,
+      "route": "retrieval_worker"
+    },
+    {
+      "id": "gq02",
+      "day08_conf": 0.625,
+      "day09_conf": 0.68,
+      "delta": 0.055,
+      "route": "policy_tool_worker"
+    },
+    {
+      "id": "gq03",
+      "day08_conf": 0.512,
+      "day09_conf": 0.51,
+      "delta": -0.002,
+      "route": "policy_tool_worker"
+    },
+    {
+      "id": "gq04",
+      "day08_conf": 0.54,
+      "day09_conf": 0.57,
+      "delta": 0.03,
+      "route": "policy_tool_worker"
+    },
+    {
+      "id": "gq05",
+      "day08_conf": 0.652,
+      "day09_conf": 0.65,
+      "delta": -0.002,
+      "route": "retrieval_worker"
+    },
+    {
+      "id": "gq06",
+      "day08_conf": 0.594,
+      "day09_conf": 0.59,
+      "delta": -0.004,
+      "route": "retrieval_worker"
+    },
+    {
+      "id": "gq07",
+      "day08_conf": 0.459,
+      "day09_conf": 0.3,
+      "delta": -0.159,
+      "route": "retrieval_worker"
+    },
+    {
+      "id": "gq08",
+      "day08_conf": 0.607,
+      "day09_conf": 0.61,
+      "delta": 0.003,
+      "route": "retrieval_worker"
+    },
+    {
+      "id": "gq09",
+      "day08_conf": 0.595,
+      "day09_conf": 0.6,
+      "delta": 0.005,
+      "route": "policy_tool_worker"
+    },
+    {
+      "id": "gq10",
+      "day08_conf": 0.628,
+      "day09_conf": 0.66,
+      "delta": 0.032,
+      "route": "policy_tool_worker"
+    }
+  ],
+  "analysis": {
+    "confidence_delta": -0.004,
+    "latency_delta_ms": 194,
+    "routing_visibility": "Day09 logs route_reason per question — debug trong O(1)",
+    "debuggability": "Day09 mỗi worker test độc lập; Day08 monolith",
+    "mcp_extensibility": "Day09 thêm tool qua MCP không sửa core; Day08 phải sửa toàn pipeline",
+    "hitl": "Day09 tự escalate ERR-* + risk_high cases; Day08 không có cơ chế này",
+    "improvements_made": [
+      "DEFAULT_TOP_K 3→5: retrieve rộng hơn để không miss evidence",
+      "Confidence dùng top-3 scores tốt nhất thay vì trung bình tất cả chunks",
+      "Exception bonus +0.03/exception thay vì penalty -0.05: detect exception đúng = tốt"
+    ]
+  }
+}
